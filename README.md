@@ -26,24 +26,29 @@ ask whats failing in the tests and fix it
 ## Auto-ask
 
 Once you've used any `ask` command in a terminal, an unknown command falls
-through to a **read-only** `ask` instead of `command not found`:
+through to `ask` instead of `command not found`:
 
 ```bash
 ask when i run htop i see 30gb used        # activates auto-ask
 what is the 17gb disk cache                # no 'ask' — still answered
 ```
 
-The fallback is deliberately read-only: an explicit `ask` can act, but a *typo*
-that trips the fallback only ever gets answered — it can never edit or run git.
-Toggle with `ask-auto on|off` (off until your first ask each terminal).
+The fallback uses the same allowlist as `ask`, so only curated (safe) commands
+ever run — a typo can at worst trigger something like `git status`, never
+`rm`/`dd`. Toggle with `ask-auto on|off` (off until your first ask each terminal).
 
 ## Acting safely — the allowlist
 
 `ask` can run commands unattended (headless mode can't pause for approval), so
-it's restricted to an allowlist: file edits plus common safe commands (`git`,
-`ls`, `cat`, `grep`, `find`, `mkdir`, `npm`, `python`, `pytest`, `make`, ...).
+it's restricted to an allowlist: file edits, common safe commands (`git`, `ls`,
+`cat`, `grep`, `find`, `mkdir`, `npm`, `python`, `pytest`, `make`, ...), and
+read-only system info (`top`, `ps`, `free`, `df`, `lscpu`, `nvidia-smi`, ...).
 Anything **not** listed — `rm`, `dd`, `mkfs`, `mv`, `chmod`, `curl`, `sudo`,
 etc. — is auto-denied, not run.
+
+When a command **is** blocked, `ask` tells you exactly how to enable it — e.g.
+`run 'ask-allow lsof'` — instead of getting stuck asking for permission it can't
+receive. Add it and re-run.
 
 This blocks casual footguns like a stray `rm`, but it is a **guardrail, not a
 sandbox**: allowed tools that execute code (`python`, `node`, `make`, `npm`) can

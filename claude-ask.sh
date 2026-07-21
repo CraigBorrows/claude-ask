@@ -4,6 +4,11 @@
 # switch to 'opus' for deeper answers, or 'sonnet' for a middle ground.
 _CLAUDE_ASK_MODEL="haiku"
 
+# Injected so that when a command is blocked by the allowlist, Claude tells you
+# how to enable it (ask-allow ...) instead of asking for interactive permission
+# it can't receive in headless mode.
+_CLAUDE_ASK_SYSPROMPT="You are invoked non-interactively through a shell wrapper called 'ask'; you cannot request interactive permission. If a Bash command or tool is blocked by the permission allowlist, do NOT ask the user to approve it or offer to proceed. Instead tell them the exact command to enable it: run 'ask-allow <command>' (for example, if 'top' is blocked, say: run 'ask-allow top'), then re-run their request. Prefer non-interactive command forms such as 'top -bn1' or 'ps'."
+
 # Per-(terminal x folder) conversation map. Claude Code scopes sessions by
 # directory, so we track one session id per folder visited in this terminal.
 declare -A _CLAUDE_SESSIONS 2>/dev/null
@@ -29,6 +34,11 @@ _CLAUDE_DO_TOOLS_DEFAULT=(
     'Bash(npm:*)' 'Bash(npx:*)' 'Bash(node:*)' 'Bash(python:*)' 'Bash(python3:*)'
     'Bash(pip:*)' 'Bash(pip3:*)' 'Bash(pytest:*)' 'Bash(cargo:*)' 'Bash(go:*)'
     'Bash(make:*)'
+    # read-only system info (so "how much cpu/memory/disk" works out of the box)
+    'Bash(ps:*)' 'Bash(top:*)' 'Bash(free:*)' 'Bash(df:*)' 'Bash(du:*)'
+    'Bash(uptime:*)' 'Bash(uname:*)' 'Bash(lscpu:*)' 'Bash(nproc:*)' 'Bash(lsblk:*)'
+    'Bash(ip:*)' 'Bash(ss:*)' 'Bash(sensors:*)' 'Bash(nvidia-smi:*)' 'Bash(vmstat:*)'
+    'Bash(hostname:*)' 'Bash(whoami:*)' 'Bash(id:*)' 'Bash(env:*)' 'Bash(printenv:*)'
 )
 
 _CLAUDE_ASK_CONFIG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/claude-ask"
@@ -61,27 +71,25 @@ _claude_norm_tool() {
 _claude_load_tools
 
 # --- core -----------------------------------------------------------------
-# _ask_run <mode> <prompt...>: run claude in the current folder's session.
-#   mode 'act'  -> grants the allowlist (can edit files / run git / etc.)
-#   mode 'read' -> grants nothing (answer only, cannot modify anything)
+# _ask_run <prompt...>: run claude in the current folder's session, granting the
+# curated allowlist. Blocked commands are reported with an 'ask-allow' hint.
 _ask_run() {
-    local mode="$1"; shift
-    local tools=()
-    [ "$mode" = act ] && tools=(--allowedTools "${_CLAUDE_DO_TOOLS[@]}")
     local sid="${_CLAUDE_SESSIONS[$PWD]}"
     if [ -n "$sid" ]; then
-        claude -p --model "$_CLAUDE_ASK_MODEL" "${tools[@]}" --resume "$sid" "$*" && return
+        claude -p --model "$_CLAUDE_ASK_MODEL" --append-system-prompt "$_CLAUDE_ASK_SYSPROMPT" \
+            --allowedTools "${_CLAUDE_DO_TOOLS[@]}" --resume "$sid" "$*" && return
         echo "(no saved session for $PWD — starting a new one)" >&2
     fi
     sid=$(uuidgen)
     _CLAUDE_SESSIONS[$PWD]="$sid"
-    claude -p --model "$_CLAUDE_ASK_MODEL" "${tools[@]}" --session-id "$sid" "$*"
+    claude -p --model "$_CLAUDE_ASK_MODEL" --append-system-prompt "$_CLAUDE_ASK_SYSPROMPT" \
+        --allowedTools "${_CLAUDE_DO_TOOLS[@]}" --session-id "$sid" "$*"
 }
 
 # ask: ask AND act in the current folder — answers questions, and can edit
 # files / run git / run tests (curated allowlist). Conversational: follow-ups in
 # the same folder remember. cd elsewhere -> its own thread; cd back -> resumes.
-ask() { _claude_activate; _ask_run act "$@"; }
+ask() { _claude_activate; _ask_run "$@"; }
 
 # askdo: kept as an alias so old muscle memory still works — same as ask.
 askdo() { ask "$@"; }
@@ -146,8 +154,9 @@ ask-tools-reset() { _CLAUDE_DO_TOOLS=("${_CLAUDE_DO_TOOLS_DEFAULT[@]}"); _claude
 # through to ask instead of "command not found". So:
 #   $ ask why is X                 (activates auto-ask)
 #   $ what is the 17gb disk cache  (no 'ask' -> still routed to ask)
-# The fallback is READ-ONLY on purpose: an explicit 'ask' can act, but a typo
-# that trips the fallback only gets answered — it can never edit or run git.
+# The fallback uses the same allowlist as ask, so blocked commands tell you how
+# to enable them (ask-allow ...). Only allowlisted commands ever run, so a typo
+# can at worst trigger a safe, curated command — never rm/dd/etc.
 # Off by default until the first ask; toggle any time with: ask-auto on|off
 
 # Flip auto-ask on, unless the user has explicitly turned it off this session.
@@ -163,12 +172,12 @@ if [ -z "${_CLAUDE_CNF_INSTALLED:-}" ]; then
 fi
 
 command_not_found_handle() {
-    # Route to a READ-ONLY ask only when auto is on AND we're not already inside
-    # a fallback (the reentrancy guard stops an infinite loop if claude/uuidgen
-    # ever go missing).
+    # Route to ask only when auto is on AND we're not already inside a fallback
+    # (the reentrancy guard stops an infinite loop if claude/uuidgen ever go
+    # missing).
     if [ -n "${_CLAUDE_ASK_AUTO:-}" ] && [ -z "${_CLAUDE_CNF_IN:-}" ]; then
         local _CLAUDE_CNF_IN=1
-        _ask_run read "$@"
+        _ask_run "$@"
         return $?
     fi
     if declare -F _claude_prev_cnf_handle >/dev/null 2>&1; then
@@ -183,7 +192,7 @@ command_not_found_handle() {
 ask-auto() {
     case "${1:-status}" in
         on)  unset _CLAUDE_ASK_AUTO_OFF; _CLAUDE_ASK_AUTO=1
-             echo "auto-ask: ON — unknown commands go to ask (read-only)." ;;
+             echo "auto-ask: ON — unknown commands go to ask." ;;
         off) _CLAUDE_ASK_AUTO_OFF=1; unset _CLAUDE_ASK_AUTO
              echo "auto-ask: OFF — unknown commands report 'command not found'." ;;
         *)   if [ -n "${_CLAUDE_ASK_AUTO:-}" ]; then echo "auto-ask: ON"; else echo "auto-ask: OFF (turns ON after your first ask)"; fi ;;
@@ -205,7 +214,8 @@ claude-ask — ask Claude Code from the terminal (current model: ${_CLAUDE_ASK_M
 
   AUTO
     ask-auto on|off    After your first ask, an unknown command falls through to
-                       a read-only ask instead of "command not found".
+                       ask instead of "command not found". Blocked commands tell
+                       you the 'ask-allow' to enable them.
 
   SESSIONS
     ask-new            Forget this folder's thread; next ask starts clean.
