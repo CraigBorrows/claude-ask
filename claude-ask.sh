@@ -4,6 +4,36 @@
 # switch to 'opus' for deeper answers, or 'sonnet' for a middle ground.
 _CLAUDE_ASK_MODEL="haiku"
 
+# ask-help: print the command cheatsheet.
+ask-help() {
+    cat <<EOF
+claude-ask — ask Claude Code from the terminal (current model: ${_CLAUDE_ASK_MODEL:-haiku})
+
+  ASK (answer only)
+    ask <q>            Conversational, scoped to the current folder; follow-ups remember.
+    ask1 <q>           One-off, no memory.
+    askdir <q>         One-off, seeded with the folder's file listing (ls -la).
+
+  ACT (do things — curated allowlist)
+    askdo <instr>      Let Claude edit files / run git / run tests in this folder.
+
+  SESSIONS
+    ask-new            Forget this folder's thread; next 'ask' here starts clean.
+    ask-id             Show this folder's session id.
+
+  ALLOWLIST (what askdo may run — persists to ~/.config/claude-ask/allowlist)
+    askdo-list         Show the current allowlist.
+    askdo-allow <c>... Allow command(s), e.g. askdo-allow docker mv.
+    askdo-deny  <c>... Remove command(s).
+    askdo-edit         Edit the allowlist in \$EDITOR, then reload.
+    askdo-reset        Restore built-in defaults.
+
+  Model: edit _CLAUDE_ASK_MODEL in claude-ask.sh (haiku | sonnet | opus).
+  Help:  ask-help          Repo: github.com/CraigBorrows/claude-ask
+EOF
+}
+askhelp() { ask-help; }
+
 # Per-(terminal x folder) conversation map. Claude Code scopes sessions by
 # directory, so we track one session id per folder visited in this terminal.
 declare -A _CLAUDE_SESSIONS 2>/dev/null

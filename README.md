@@ -14,6 +14,7 @@ persistent REPL.
 | `ask1 <question>` | A true one-off — no memory, ignores folder sessions. |
 | `askdir <question>` | One-off, seeded with the current folder's `ls -la` as context. |
 | `askdo <instruction>` | Lets Claude **act** in the current folder — edit files, run git, run tests — using a curated command allowlist. Shares the folder's `ask` session. |
+| `ask-help` (or `askhelp`) | Print the command cheatsheet. |
 
 `ask*` commands only answer; `askdo` actually does things:
 
