@@ -1,82 +1,88 @@
 # claude-ask
 
 Lightweight shell helpers for asking [Claude Code](https://claude.com/claude-code)
-questions straight from the terminal — `cd` into a folder and just ask, no
-persistent REPL.
+straight from the terminal — `cd` into a folder and just ask, no persistent REPL.
 
 ## Commands
 
 | Command | Behavior |
 |---------|----------|
-| `ask <question>` | Conversational, scoped to the **current folder**. First `ask` in a folder starts a session; later `ask`s in that same folder resume it, so follow-ups remember context. `cd` back into a folder later and it resumes that folder's thread. A new terminal starts fresh. |
-| `ask-new` | Forget the current folder's thread; the next `ask` here starts clean. |
-| `ask-id` | Print the current folder's session id. |
-| `ask1 <question>` | A true one-off — no memory, ignores folder sessions. |
-| `askdir <question>` | One-off, seeded with the current folder's `ls -la` as context. |
-| `askdo <instruction>` | Lets Claude **act** in the current folder — edit files, run git, run tests — using a curated command allowlist. Shares the folder's `ask` session. |
+| `ask <q>` | Ask **and** act in the current folder — answers questions, and can edit files, run git, run tests (curated allowlist). Conversational and scoped to the folder: first `ask` starts a session, later `ask`s resume it, so follow-ups remember. `cd` back into a folder resumes its thread. New terminal starts fresh. |
+| `askdo <q>` | Same as `ask` (kept as an alias for old muscle memory). |
+| `ask1 <q>` | Quick one-off — no memory, no actions. |
+| `askdir <q>` | One-off, seeded with the current folder's `ls -la` as context. |
+| `ask-new` | Forget this folder's thread; the next `ask` here starts clean. |
+| `ask-id` | Print this folder's session id. |
 | `ask-help` (or `askhelp`) | Print the command cheatsheet. |
-
-`ask*` commands only answer; `askdo` actually does things:
-
-```bash
-askdo commit these changes with a good message
-askdo create a .gitignore for a python project
-askdo whats failing in the test suite and fix it
-```
-
-## askdo autonomy & safety
-
-`askdo` runs unattended (headless mode can't pause for approval), so it's
-restricted to the allowlist in `_CLAUDE_DO_TOOLS` at the top of `claude-ask.sh`:
-file edits plus common safe commands (`git`, `ls`, `cat`, `grep`, `find`,
-`mkdir`, `npm`, `python`, `pytest`, `make`, ...). Anything **not** listed —
-`rm`, `dd`, `mkfs`, `mv`, `chmod`, `curl`, `sudo`, etc. — is auto-denied, not run.
-
-This blocks casual footguns like a stray `rm`, but it is a **guardrail, not a
-sandbox**: allowed tools that execute code (`python`, `node`, `make`, `npm`) can
-still do anything a script tells them to. Only `askdo` in folders you'd trust it
-to act in.
-
-### Editing the allowlist on the fly
-
-The live allowlist is stored in `~/.config/claude-ask/allowlist` (seeded from the
-`_CLAUDE_DO_TOOLS_DEFAULT` defaults on first use). Manage it without editing any
-file — changes apply to the current terminal **and** persist for new ones:
-
-| Command | Does |
-|---------|------|
-| `askdo-list` | Print the current allowlist. |
-| `askdo-allow <cmd>...` | Allow command(s). `askdo-allow docker` adds `Bash(docker:*)`. Bare names become `Bash(name:*)`; full rules like `Bash(git log:*)` or tool names like `Write` pass through. |
-| `askdo-deny <cmd>...` | Remove command(s) from the allowlist. |
-| `askdo-edit` | Open the allowlist in `$EDITOR`, then reload it. |
-| `askdo-reset` | Restore the built-in defaults. |
-
-```bash
-askdo-allow docker terraform    # let askdo run docker/terraform from now on
-askdo-deny cp                   # take cp back off the list
-askdo-list                      # see what's currently allowed
-```
-
-Note: changes reach *other already-open terminals* only after they re-source
-(`source ~/.bashrc.d/claude-ask.sh`) — they loaded their copy at startup.
 
 ```bash
 cd ~/projects/thing
 ask what does this project do
 ask which files changed most recently
-ask ok summarize that in one line
+ask commit these changes with a good message
+ask whats failing in the tests and fix it
 ```
+
+## Auto-ask
+
+Once you've used any `ask` command in a terminal, an unknown command falls
+through to a **read-only** `ask` instead of `command not found`:
+
+```bash
+ask when i run htop i see 30gb used        # activates auto-ask
+what is the 17gb disk cache                # no 'ask' — still answered
+```
+
+The fallback is deliberately read-only: an explicit `ask` can act, but a *typo*
+that trips the fallback only ever gets answered — it can never edit or run git.
+Toggle with `ask-auto on|off` (off until your first ask each terminal).
+
+## Acting safely — the allowlist
+
+`ask` can run commands unattended (headless mode can't pause for approval), so
+it's restricted to an allowlist: file edits plus common safe commands (`git`,
+`ls`, `cat`, `grep`, `find`, `mkdir`, `npm`, `python`, `pytest`, `make`, ...).
+Anything **not** listed — `rm`, `dd`, `mkfs`, `mv`, `chmod`, `curl`, `sudo`,
+etc. — is auto-denied, not run.
+
+This blocks casual footguns like a stray `rm`, but it is a **guardrail, not a
+sandbox**: allowed tools that execute code (`python`, `node`, `make`, `npm`) can
+still do anything a script tells them to. Only ask it to act in folders you'd
+trust it to act in.
+
+### Editing the allowlist on the fly
+
+The live allowlist lives in `~/.config/claude-ask/allowlist` (seeded from the
+`_CLAUDE_DO_TOOLS_DEFAULT` defaults in `claude-ask.sh` on first use). Manage it
+without editing any file — changes apply now **and** persist for new terminals:
+
+| Command | Does |
+|---------|------|
+| `ask-tools` | Print the current allowlist. |
+| `ask-allow <cmd>...` | Allow command(s). `ask-allow docker` adds `Bash(docker:*)`. Bare names become `Bash(name:*)`; full rules like `Bash(git log:*)` or tool names like `Write` pass through. |
+| `ask-deny <cmd>...` | Remove command(s) from the allowlist. |
+| `ask-tools-edit` | Open the allowlist in `$EDITOR`, then reload it. |
+| `ask-tools-reset` | Restore the built-in defaults. |
+
+```bash
+ask-allow docker terraform    # let ask run docker/terraform from now on
+ask-deny cp                   # take cp back off the list
+ask-tools                     # see what's currently allowed
+```
+
+Note: changes reach *other already-open terminals* only after they re-source
+(`source ~/.bashrc.d/claude-ask.sh`) — they loaded their copy at startup.
 
 ## Model
 
-The model is set by one variable at the top of `claude-ask.sh`:
+Set by one variable at the top of `claude-ask.sh`:
 
 ```bash
 _CLAUDE_ASK_MODEL="haiku"   # fastest, good for quick shell Q&A
 ```
 
-Switch to `opus` for deeper answers or `sonnet` for a middle ground. You can also
-override per-call, e.g. `ask1 --model opus "..."`.
+Switch to `opus` for deeper answers or `sonnet` for a middle ground. Note: Haiku
+is fast but weakest at multi-step code fixes — bump to `opus` for gnarly work.
 
 ## Install
 
@@ -84,9 +90,9 @@ override per-call, e.g. `ask1 --model opus "..."`.
 ./install.sh
 ```
 
-This symlinks `claude-ask.sh` into `~/.bashrc.d/`, which Craig's `.bashrc`
-auto-sources. Open a new terminal (or `source ~/.bashrc.d/claude-ask.sh`) and the
-`ask` commands are available. Requires the `claude` CLI on `PATH` and `uuidgen`.
+Symlinks `claude-ask.sh` into `~/.bashrc.d/`, which `.bashrc` auto-sources. Open a
+new terminal (or `source ~/.bashrc.d/claude-ask.sh`) and the commands are
+available. Requires the `claude` CLI on `PATH` and `uuidgen`.
 
 ## How it works
 
@@ -96,4 +102,6 @@ only finds a session created in the same directory. The helpers keep a bash
 associative array keyed by `$PWD`, holding one `uuidgen` id per folder visited in
 the terminal. The first `ask` in a folder uses `--session-id` to mint it; later
 ones use `--resume`. The array lives in the interactive shell, so it's naturally
-per-terminal and dies when the terminal closes.
+per-terminal and dies when the terminal closes. Auto-ask is a
+`command_not_found_handle` that routes unknown commands to a read-only `ask` once
+activated, preserving any pre-existing handler (e.g. Fedora's package suggester).
