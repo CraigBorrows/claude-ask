@@ -34,7 +34,30 @@ file edits plus common safe commands (`git`, `ls`, `cat`, `grep`, `find`,
 This blocks casual footguns like a stray `rm`, but it is a **guardrail, not a
 sandbox**: allowed tools that execute code (`python`, `node`, `make`, `npm`) can
 still do anything a script tells them to. Only `askdo` in folders you'd trust it
-to act in. Edit `_CLAUDE_DO_TOOLS` to widen or tighten the list.
+to act in.
+
+### Editing the allowlist on the fly
+
+The live allowlist is stored in `~/.config/claude-ask/allowlist` (seeded from the
+`_CLAUDE_DO_TOOLS_DEFAULT` defaults on first use). Manage it without editing any
+file — changes apply to the current terminal **and** persist for new ones:
+
+| Command | Does |
+|---------|------|
+| `askdo-list` | Print the current allowlist. |
+| `askdo-allow <cmd>...` | Allow command(s). `askdo-allow docker` adds `Bash(docker:*)`. Bare names become `Bash(name:*)`; full rules like `Bash(git log:*)` or tool names like `Write` pass through. |
+| `askdo-deny <cmd>...` | Remove command(s) from the allowlist. |
+| `askdo-edit` | Open the allowlist in `$EDITOR`, then reload it. |
+| `askdo-reset` | Restore the built-in defaults. |
+
+```bash
+askdo-allow docker terraform    # let askdo run docker/terraform from now on
+askdo-deny cp                   # take cp back off the list
+askdo-list                      # see what's currently allowed
+```
+
+Note: changes reach *other already-open terminals* only after they re-source
+(`source ~/.bashrc.d/claude-ask.sh`) — they loaded their copy at startup.
 
 ```bash
 cd ~/projects/thing

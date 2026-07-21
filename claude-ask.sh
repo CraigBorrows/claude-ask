@@ -23,12 +23,17 @@ ask() {
     claude -p --model "$_CLAUDE_ASK_MODEL" --session-id "$sid" "$*"
 }
 
-# Commands askdo may run unattended. Anything NOT listed here (rm, dd, mkfs,
-# mv, chmod, chown, curl, wget, sudo, ...) is auto-denied, not run. Edit freely.
+# Commands askdo may run unattended. Anything NOT listed (rm, dd, mkfs, mv,
+# chmod, chown, curl, wget, sudo, ...) is auto-denied, not run.
 # NOTE: this stops casual footguns like a stray `rm`, but tools that run code
 # (python, node, make, npm) can still do anything a script tells them to — it's
 # a guardrail, not a sandbox. Only 'askdo' in folders you'd let it act in.
-_CLAUDE_DO_TOOLS=(
+#
+# These are the built-in DEFAULTS (the seed). The live list is kept in
+# $_CLAUDE_DO_TOOLS_FILE and edited on the fly with askdo-allow / askdo-deny /
+# askdo-list / askdo-edit / askdo-reset. Persisted there, it survives new
+# terminals and git pulls without touching this file.
+_CLAUDE_DO_TOOLS_DEFAULT=(
     Read Grep Glob LS Edit Write MultiEdit NotebookEdit
     'Bash(git:*)' 'Bash(ls:*)' 'Bash(cat:*)' 'Bash(head:*)' 'Bash(tail:*)'
     'Bash(grep:*)' 'Bash(rg:*)' 'Bash(find:*)' 'Bash(mkdir:*)' 'Bash(touch:*)'
@@ -39,6 +44,74 @@ _CLAUDE_DO_TOOLS=(
     'Bash(pip:*)' 'Bash(pip3:*)' 'Bash(pytest:*)' 'Bash(cargo:*)' 'Bash(go:*)'
     'Bash(make:*)'
 )
+
+_CLAUDE_ASK_CONFIG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/claude-ask"
+_CLAUDE_DO_TOOLS_FILE="$_CLAUDE_ASK_CONFIG_DIR/allowlist"
+
+# Load the live allowlist into _CLAUDE_DO_TOOLS: prefer the user file, else seed
+# from the built-in defaults.
+_claude_load_tools() {
+    if [ -f "$_CLAUDE_DO_TOOLS_FILE" ]; then
+        mapfile -t _CLAUDE_DO_TOOLS < <(grep -vE '^[[:space:]]*(#|$)' "$_CLAUDE_DO_TOOLS_FILE")
+    else
+        _CLAUDE_DO_TOOLS=("${_CLAUDE_DO_TOOLS_DEFAULT[@]}")
+    fi
+}
+
+_claude_save_tools() {
+    mkdir -p "$_CLAUDE_ASK_CONFIG_DIR"
+    printf '%s\n' "${_CLAUDE_DO_TOOLS[@]}" > "$_CLAUDE_DO_TOOLS_FILE"
+}
+
+# Turn a bare command ("docker") into a Bash rule ("Bash(docker:*)"); pass
+# through tool names and already-formed rules unchanged.
+_claude_norm_tool() {
+    case "$1" in
+        *'('*)                    printf '%s' "$1" ;;   # already a rule
+        Bash|Read|Write|Edit|MultiEdit|Grep|Glob|LS|NotebookEdit)
+                                  printf '%s' "$1" ;;   # tool name
+        *)                        printf 'Bash(%s:*)' "$1" ;;
+    esac
+}
+
+_claude_load_tools
+
+# askdo-list: show the current allowlist.
+askdo-list() { printf '%s\n' "${_CLAUDE_DO_TOOLS[@]}"; }
+
+# askdo-allow <cmd>...: allow command(s) now and for future terminals.
+#   e.g. askdo-allow docker mv   ->   adds Bash(docker:*) Bash(mv:*)
+askdo-allow() {
+    local c t
+    for c in "$@"; do
+        t=$(_claude_norm_tool "$c")
+        printf '%s\n' "${_CLAUDE_DO_TOOLS[@]}" | grep -qxF -- "$t" || _CLAUDE_DO_TOOLS+=("$t")
+    done
+    _claude_save_tools
+    echo "Allowed: $* (this + new terminals). Now $(( ${#_CLAUDE_DO_TOOLS[@]} )) rules."
+}
+
+# askdo-deny <cmd>...: remove command(s) from the allowlist.
+askdo-deny() {
+    local c t existing drop keep=()
+    for existing in "${_CLAUDE_DO_TOOLS[@]}"; do
+        drop=0
+        for c in "$@"; do
+            t=$(_claude_norm_tool "$c")
+            [ "$existing" = "$t" ] && drop=1
+        done
+        [ "$drop" -eq 0 ] && keep+=("$existing")
+    done
+    _CLAUDE_DO_TOOLS=("${keep[@]}")
+    _claude_save_tools
+    echo "Removed: $*. Now $(( ${#_CLAUDE_DO_TOOLS[@]} )) rules."
+}
+
+# askdo-edit: open the allowlist file in $EDITOR, then reload it.
+askdo-edit() { "${EDITOR:-nano}" "$_CLAUDE_DO_TOOLS_FILE"; _claude_load_tools; echo "Reloaded."; }
+
+# askdo-reset: restore the built-in defaults.
+askdo-reset() { _CLAUDE_DO_TOOLS=("${_CLAUDE_DO_TOOLS_DEFAULT[@]}"); _claude_save_tools; echo "Reset to defaults ($(( ${#_CLAUDE_DO_TOOLS[@]} )) rules)."; }
 
 # askdo: let Claude actually DO things in the current folder — edit files, run
 # git, run tests — using only the curated allowlist above. Shares this folder's
