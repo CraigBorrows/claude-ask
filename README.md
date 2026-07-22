@@ -57,6 +57,24 @@ It deliberately redraws one bounded line rather than emitting a growing run of
 dots: a long wait produced enough dots to wrap across terminal lines, which
 can't be erased cleanly and left whitespace residue behind.
 
+For longer jobs, each command Claude runs is surfaced **live** rather than
+leaving you staring at a silent prompt:
+
+```
+$ ask stash the launcher changes, pull, then pop the stash
+  → Bash git stash
+  → Bash git pull
+  → Bash git stash pop
+thinking 41s
+Done. Changes stashed, latest pulled, stash popped back.
+  ⏱ 62.58s
+```
+
+Activity lines go to **stderr** and the answer to **stdout**, so `ask ... | grep`
+still sees only the answer. This uses `--output-format stream-json` and needs
+`jq`; without it (or with `_CLAUDE_ASK_STREAM=`) it falls back to buffering the
+output and showing just the indicator.
+
 Dots only animate when stderr is a terminal, so pipes and scripts stay clean.
 Set `_CLAUDE_ASK_DOTS=` to turn them off. Ctrl-C during a request kills the
 underlying `claude` process and cleans up its temp files.

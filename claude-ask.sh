@@ -155,9 +155,63 @@ _ask_wait_dots() {
     wait "$pid"
 }
 
-# Run claude in the background so we can show progress, buffering its streams so
-# the dots never interleave with the answer. stdout/stderr stay separate.
+# Stream mode: show what Claude is doing while it works, instead of sitting
+# silent for a minute. Uses --output-format stream-json and surfaces each tool
+# call live on stderr; the final answer goes to stdout, so piping still works.
+#
+# Runs in the foreground (a pipeline), which is simpler than the buffered path
+# below: Ctrl-C reaches claude naturally, there are no temp files, and no job
+# control chatter. Needs jq; without it we fall back to _ask_claude_buffered.
+_ask_claude_stream() {
+    local start tag payload rc secs
+    start=$(_ask_now_ms)
+    set -o pipefail
+    claude "$@" --output-format stream-json --verbose 2>/dev/null \
+      | jq --unbuffered -r '
+          if .type=="assistant" then
+            (.message.content[]? | select(.type=="tool_use")
+             | "T\t" + .name + " " + ((.input.command // .input.file_path // "") | tostring))
+          elif .type=="result" then
+            "R\t" + ((.result // "") | @base64)
+          else empty end' \
+      | while :; do
+            IFS=$'\t' read -r -t 1 tag payload; rc=$?
+            if [ $rc -eq 0 ]; then
+                case "$tag" in
+                    T) [ -t 2 ] && printf '\r\033[K' >&2
+                       printf '  → %s\n' "${payload:0:110}" >&2 ;;
+                    R) [ -t 2 ] && printf '\r\033[K' >&2
+                       printf '%s' "$payload" | base64 -d; printf '\n' ;;
+                esac
+            elif [ $rc -gt 128 ]; then
+                # read timed out: tick the elapsed indicator so gaps between
+                # tool calls still look alive
+                if [ -n "${_CLAUDE_ASK_DOTS:-}" ] && [ -t 2 ]; then
+                    secs=$(( ( $(_ask_now_ms) - start ) / 1000 ))
+                    printf '\r\033[Kthinking %ds' "$secs" >&2
+                fi
+            else
+                break
+            fi
+        done
+    rc=$?
+    set +o pipefail
+    [ -t 2 ] && printf '\r\033[K' >&2
+    return $rc
+}
+
 _ask_claude() {
+    # ${x-1} not ${x:-1}, so setting _CLAUDE_ASK_STREAM= actually disables it.
+    if [ -n "${_CLAUDE_ASK_STREAM-1}" ] && command -v jq >/dev/null 2>&1; then
+        _ask_claude_stream "$@"
+        return $?
+    fi
+    _ask_claude_buffered "$@"
+}
+
+# Fallback for when jq isn't available: run claude in the background so we can
+# still show progress, buffering its streams so the indicator never interleaves.
+_ask_claude_buffered() {
     local out err rc pid had_m=0
     out=$(mktemp) || { claude "$@"; return $?; }
     err=$(mktemp) || { rm -f "$out"; claude "$@"; return $?; }
