@@ -11,6 +11,8 @@ straight from the terminal — `cd` into a folder and just ask, no persistent RE
 | `askdo <q>` | Same as `ask` (kept as an alias for old muscle memory). |
 | `ask1 <q>` | Quick one-off — no memory, no actions. |
 | `askdir <q>` | One-off, seeded with the current folder's `ls -la` as context. |
+| `askp [q]` | Paste text safely (Ctrl-D), then ask about it — nothing is executed. |
+| `runp` | Paste command(s) (Ctrl-D), review, confirm, then run. |
 | `ask-new` | Forget this folder's thread; the next `ask` here starts clean. |
 | `ask-id` | Print this folder's session id. |
 | `ask-help` (or `askhelp`) | Print the command cheatsheet. |
@@ -49,10 +51,22 @@ auto-ask has two guards:
 - **Rate limit** — at most 6 auto-asks per 60 seconds, so a big paste can't
   spray LLM calls.
 
-Still: **run `ask-auto off` before pasting blocks of text**, and never paste a
-chat response back into the shell — prose and code fences will be executed line
-by line, and a heredoc (`<< 'EOF'`) will happily swallow the whole thing into
-whatever file it's writing.
+### Pasting safely — `askp` and `runp`
+
+The hazard isn't pasting, it's pasting **at the bash prompt**, where every line
+becomes a command (and a heredoc like `<< 'EOF'` will swallow prose, code fences
+and all, straight into whatever file it's writing). These read the paste as
+**data** instead, so nothing executes:
+
+| Command | Does |
+|---------|------|
+| `askp [question]` | Paste text, press **Ctrl-D**, and it's sent to `ask` as context. Nothing is executed. |
+| `runp` | Paste command(s), press **Ctrl-D**, see exactly what will run, then confirm `y`. Markdown ```` ``` ```` fences are stripped, so pasting a ```` ```bash ```` block works. Fails safe (runs nothing) if it can't get a terminal to confirm on. |
+
+```bash
+askp what does this error mean       # then paste the traceback, Ctrl-D
+runp                                 # then paste a ```bash block, Ctrl-D, y
+```
 
 ## Acting safely — the allowlist
 

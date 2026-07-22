@@ -104,6 +104,47 @@ askdir() {
         | claude -p --model "$_CLAUDE_ASK_MODEL" "Answer the question using the directory listing above as context."
 }
 
+# --- safe pasting ---------------------------------------------------------
+# Pasting at the bash prompt is hazardous because every line is executed as a
+# command (and a heredoc will swallow the lot into a file). These read the paste
+# as DATA instead — nothing runs unless you explicitly confirm.
+
+# askp [question]: paste text (Ctrl-D to finish), then ask about it.
+#   e.g.  askp what does this error mean      <paste>  Ctrl-D
+askp() {
+    local q="$*" text
+    echo "-- paste text, then press Ctrl-D --" >&2
+    text=$(cat)
+    [ -z "$text" ] && { echo "(nothing pasted)" >&2; return 1; }
+    _claude_activate
+    _ask_run "${q:-Explain the following pasted text.}
+
+--- pasted ---
+$text"
+}
+
+# runp: paste command(s) (Ctrl-D), review them, confirm, then run.
+#   Markdown code fences are stripped, so pasting a ```bash block works.
+runp() {
+    local text reply
+    echo "-- paste command(s), then press Ctrl-D --" >&2
+    text=$(cat | sed '/^[[:space:]]*```/d')
+    [ -z "${text//[[:space:]]/}" ] && { echo "(nothing pasted)" >&2; return 1; }
+    echo "----- will run -----" >&2
+    printf '%s\n' "$text" >&2
+    echo "--------------------" >&2
+    # stdin holds the paste, so read the confirmation from the terminal itself.
+    # No terminal (script/pipe) -> fail safe and run nothing.
+    if ! { [ -r /dev/tty ] && read -r -p "Run this? [y/N] " reply </dev/tty; } 2>/dev/null; then
+        echo "(no terminal available to confirm — cancelled)" >&2
+        return 1
+    fi
+    case "$reply" in
+        y|Y) eval "$text" ;;
+        *)   echo "cancelled" >&2; return 1 ;;
+    esac
+}
+
 # --- sessions -------------------------------------------------------------
 # ask-new: forget this folder's thread; next ask starts clean.
 ask-new() { unset "_CLAUDE_SESSIONS[$PWD]"; echo "Fresh Claude session for $PWD."; }
@@ -250,6 +291,10 @@ claude-ask — ask Claude Code from the terminal (current model: ${_CLAUDE_ASK_M
     askdo <q>          Same as ask (kept for old muscle memory).
     ask1 <q>           Quick one-off — no memory, no actions.
     askdir <q>         One-off, seeded with the folder's file listing (ls -la).
+
+  PASTING (safe — the paste is read as data, never executed)
+    askp [q]           Paste text (Ctrl-D), then ask about it.
+    runp               Paste command(s) (Ctrl-D), review, confirm, then run.
 
   AUTO
     ask-auto on|off    After your first ask, an unknown command falls through to
