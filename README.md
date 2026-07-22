@@ -14,7 +14,9 @@ straight from the terminal — `cd` into a folder and just ask, no persistent RE
 | `askp [q]` | Paste text safely (Ctrl-D), then ask about it — nothing is executed. |
 | `runp` | Paste command(s) (Ctrl-D), review, confirm, then run. |
 | `ask-new` | Forget this folder's thread; the next `ask` here starts clean. |
-| `ask-id` | Print this folder's session id. |
+| `ask-id` | Print this folder's session id, size, and how close it is to rotating. |
+| `ask-sessions` | List all ask-created sessions (they're tagged `ask: <folder>`). |
+| `ask-timer on\|off` | Show elapsed time after each ask (on by default). |
 | `ask-help` (or `askhelp`) | Print the command cheatsheet. |
 
 ```bash
@@ -108,6 +110,43 @@ ask-tools                     # see what's currently allowed
 
 Note: changes reach *other already-open terminals* only after they re-source
 (`source ~/.bashrc.d/claude-ask.sh`) — they loaded their copy at startup.
+
+## Speed
+
+Measured on this setup: process startup is **0.09s** — spawning is not the
+bottleneck. The API round trip is a **~3.2s floor**, and the one thing that
+degrades over time is conversation history, because every ask re-sends the
+folder's whole thread:
+
+| Session size | Resume time |
+|---|---|
+| 12 KB | 3.3s |
+| 552 KB | 5.6s |
+| 1.6 MB | 12.1s |
+
+So a thread auto-rotates once it passes `_CLAUDE_ASK_MAX_KB` (default **250KB**),
+keeping asks near the floor. It announces itself:
+
+```
+  ↻ thread was 312KB — started a fresh one to stay fast (ask-id for details)
+```
+
+The trade-off is that rotating drops that folder's accumulated context. Raise
+`_CLAUDE_ASK_MAX_KB` to keep more history, lower it to stay faster, or set it
+huge to disable rotation. `ask-id` shows where the current thread sits, and
+`ask1` skips history entirely for standalone questions (constant ~3.3s).
+
+## Telling ask sessions apart
+
+Ask threads are created with `--name "ask: <folder>"`, so they're distinguishable
+from ordinary interactive sessions — the name shows up in `claude -r` / `/resume`,
+and `ask-sessions` lists just them:
+
+```
+SIZE     NAME                        SESSION ID
+16KB     ask: claude-ask             1249f940-ed4e-43d4-8a15-ffb6a3a1bf7b
+12KB     ask: RC-6-hw                d4f61a6e-17e6-4950-8da4-32682c1a2bf2
+```
 
 ## Model
 

@@ -71,19 +71,69 @@ _claude_norm_tool() {
 _claude_load_tools
 
 # --- core -----------------------------------------------------------------
+# Every ask re-sends the folder's whole conversation history, so a thread gets
+# progressively slower as it grows (measured: 3.3s at 12KB, 5.6s at 550KB,
+# 12.1s at 1.6MB — while process startup is only 0.09s). Past this size we start
+# a fresh thread so asks stay near the ~3.3s floor. Set to a huge number to
+# disable rotation, or lower it to rotate sooner.
+_CLAUDE_ASK_MAX_KB=250
+
+# Show elapsed time after each ask. Toggle with: ask-timer on|off
+_CLAUDE_ASK_TIMER=1
+
+# Locate a session's transcript by globbing, rather than reconstructing Claude's
+# cwd->project path encoding (which is undocumented and version-dependent).
+_ask_session_file() { ls -1 "$HOME"/.claude/projects/*/"$1".jsonl 2>/dev/null | head -1; }
+_ask_session_kb() {
+    local f; f=$(_ask_session_file "$1")
+    if [ -n "$f" ]; then du -k "$f" 2>/dev/null | cut -f1; else echo 0; fi
+}
+
+# Milliseconds since epoch. EPOCHREALTIME avoids forking; the [.,] handles
+# locales that use a comma as the decimal separator.
+_ask_now_ms() {
+    local e=${EPOCHREALTIME:-}
+    if [ -n "$e" ]; then e=${e/[.,]/}; echo $(( e / 1000 )); else date +%s%3N; fi
+}
+
+_ask_timer() {
+    [ -n "${_CLAUDE_ASK_TIMER:-}" ] || return 0
+    local ms=$(( $(_ask_now_ms) - $1 ))
+    printf '  ⏱ %d.%02ds\n' $(( ms / 1000 )) $(( (ms % 1000) / 10 )) >&2
+}
+
 # _ask_run <prompt...>: run claude in the current folder's session, granting the
 # curated allowlist. Blocked commands are reported with an 'ask-allow' hint.
 _ask_run() {
-    local sid="${_CLAUDE_SESSIONS[$PWD]}"
+    local sid t0 kb rc
+    t0=$(_ask_now_ms)
+    sid="${_CLAUDE_SESSIONS[$PWD]}"
+
+    # Rotate an oversized thread before it slows everything down.
+    if [ -n "$sid" ]; then
+        kb=$(_ask_session_kb "$sid")
+        if [ "${kb:-0}" -gt "${_CLAUDE_ASK_MAX_KB:-250}" ]; then
+            echo "  ↻ thread was ${kb}KB — started a fresh one to stay fast (ask-id for details)" >&2
+            sid=""
+        fi
+    fi
+
     if [ -n "$sid" ]; then
         claude -p --model "$_CLAUDE_ASK_MODEL" --append-system-prompt "$_CLAUDE_ASK_SYSPROMPT" \
-            --allowedTools "${_CLAUDE_DO_TOOLS[@]}" --resume "$sid" "$*" && return
+            --allowedTools "${_CLAUDE_DO_TOOLS[@]}" --resume "$sid" "$*"
+        rc=$?
+        if [ $rc -eq 0 ]; then _ask_timer "$t0"; return 0; fi
         echo "(no saved session for $PWD — starting a new one)" >&2
     fi
     sid=$(uuidgen)
     _CLAUDE_SESSIONS[$PWD]="$sid"
+    # --name tags the session so ask threads are tellable apart from normal
+    # claude sessions (shows in 'claude -r' / /resume, and in 'ask-sessions').
     claude -p --model "$_CLAUDE_ASK_MODEL" --append-system-prompt "$_CLAUDE_ASK_SYSPROMPT" \
-        --allowedTools "${_CLAUDE_DO_TOOLS[@]}" --session-id "$sid" "$*"
+        --allowedTools "${_CLAUDE_DO_TOOLS[@]}" --name "ask: ${PWD##*/}" --session-id "$sid" "$*"
+    rc=$?
+    _ask_timer "$t0"
+    return $rc
 }
 
 # ask: ask AND act in the current folder — answers questions, and can edit
@@ -149,8 +199,44 @@ runp() {
 # ask-new: forget this folder's thread; next ask starts clean.
 ask-new() { unset "_CLAUDE_SESSIONS[$PWD]"; echo "Fresh Claude session for $PWD."; }
 
-# ask-id: show this folder's current session id.
-ask-id() { echo "${_CLAUDE_SESSIONS[$PWD]:-<none yet for $PWD — run 'ask'>}"; }
+# ask-id: show this folder's session id, size, and how close it is to rotating.
+ask-id() {
+    local sid="${_CLAUDE_SESSIONS[$PWD]}"
+    if [ -z "$sid" ]; then echo "<none yet for $PWD — run 'ask'>"; return; fi
+    local kb; kb=$(_ask_session_kb "$sid")
+    echo "$sid"
+    echo "  folder : $PWD"
+    echo "  size   : ${kb}KB of ${_CLAUDE_ASK_MAX_KB:-250}KB (rotates past that)"
+    echo "  file   : $(_ask_session_file "$sid")"
+}
+
+# ask-sessions: list sessions created by ask. They're tagged with an
+# "ask: <folder>" name at creation, which is what distinguishes them from
+# ordinary interactive claude sessions. Only the head of each transcript is
+# scanned, so this stays fast even with many large files.
+ask-sessions() {
+    local f name kb found=0
+    printf '%-7s  %-26s  %s\n' "SIZE" "NAME" "SESSION ID"
+    for f in "$HOME"/.claude/projects/*/*.jsonl; do
+        [ -e "$f" ] || continue
+        name=$(head -c 4096 "$f" 2>/dev/null | grep -m1 -o '"agentName":"ask:[^"]*"')
+        [ -n "$name" ] || continue
+        name=${name#\"agentName\":\"}; name=${name%\"}
+        kb=$(du -k "$f" | cut -f1)
+        printf '%-7s  %-26s  %s\n' "${kb}KB" "$name" "$(basename "$f" .jsonl)"
+        found=1
+    done
+    [ "$found" = 1 ] || echo "(no ask sessions yet)"
+}
+
+# ask-timer [on|off]: show elapsed time after each ask.
+ask-timer() {
+    case "${1:-status}" in
+        on)  _CLAUDE_ASK_TIMER=1; echo "timer: ON" ;;
+        off) unset _CLAUDE_ASK_TIMER; echo "timer: OFF" ;;
+        *)   if [ -n "${_CLAUDE_ASK_TIMER:-}" ]; then echo "timer: ON"; else echo "timer: OFF"; fi ;;
+    esac
+}
 
 # --- allowlist management -------------------------------------------------
 # ask-tools: show the current allowlist.
@@ -303,7 +389,10 @@ claude-ask — ask Claude Code from the terminal (current model: ${_CLAUDE_ASK_M
 
   SESSIONS
     ask-new            Forget this folder's thread; next ask starts clean.
-    ask-id             Show this folder's session id.
+    ask-id             Show this folder's session id, size, and rotate limit.
+    ask-sessions       List all ask-created sessions (tagged "ask: <folder>").
+    ask-timer on|off   Show elapsed time after each ask (default on).
+                       Threads auto-rotate past \${_CLAUDE_ASK_MAX_KB}KB to stay fast.
 
   ALLOWLIST (what ask may run — persists to ~/.config/claude-ask/allowlist)
     ask-tools          Show the allowlist.
