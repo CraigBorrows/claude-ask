@@ -43,6 +43,20 @@ Note the trade-off: investigating costs real tool round-trips, so a question tha
 makes it go look at things can take ~15s versus the ~3.3s floor. Use `ask1` when
 you just want a quick fact with no investigation.
 
+While waiting, `ask` prints progress dots so a slow answer doesn't look like a
+hang; they're erased once the answer arrives, and the elapsed time is shown:
+
+```
+$ ask installed an add on for navigation how do i use
+........................
+You have zoxide (smart cd) and fzf (fuzzy finder) installed...
+  ⏱ 14.50s
+```
+
+Dots only animate when stderr is a terminal, so pipes and scripts stay clean.
+Set `_CLAUDE_ASK_DOTS=` to turn them off. Ctrl-C during a request kills the
+underlying `claude` process and cleans up its temp files.
+
 ## Auto-ask
 
 Once you've used any `ask` command in a terminal, an unknown command falls

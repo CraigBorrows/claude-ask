@@ -124,6 +124,45 @@ _ask_timer() {
     printf '  ⏱ %d.%02ds\n' $(( ms / 1000 )) $(( (ms % 1000) / 10 )) >&2
 }
 
+# Progress dots while waiting, so a slow answer doesn't look like a hang.
+# Set _CLAUDE_ASK_DOTS= to disable.
+_CLAUDE_ASK_DOTS=1
+
+# Wait for $1, printing a dot every 0.4s. Only animates when stderr is a
+# terminal, so pipes and scripts stay clean. Dots are erased when done.
+_ask_wait_dots() {
+    local pid=$1 n=0
+    if [ -z "${_CLAUDE_ASK_DOTS:-}" ] || [ ! -t 2 ]; then
+        wait "$pid"; return $?
+    fi
+    while kill -0 "$pid" 2>/dev/null; do
+        printf '.' >&2; n=$(( n + 1 )); sleep 0.4
+    done
+    [ "$n" -gt 0 ] && printf '\r%*s\r' "$n" '' >&2
+    wait "$pid"
+}
+
+# Run claude in the background so we can show progress, buffering its streams so
+# the dots never interleave with the answer. stdout/stderr stay separate.
+_ask_claude() {
+    local out err rc pid
+    out=$(mktemp) || { claude "$@"; return $?; }
+    err=$(mktemp) || { rm -f "$out"; claude "$@"; return $?; }
+    claude "$@" >"$out" 2>"$err" &
+    pid=$!
+    # Running claude in the background puts it outside the foreground process
+    # group, so Ctrl-C no longer reaches it — kill it ourselves, and don't leave
+    # temp files behind. 130 is the conventional SIGINT exit status.
+    trap 'kill "$pid" 2>/dev/null; rm -f "$out" "$err"; trap - INT; return 130' INT
+    _ask_wait_dots "$pid"
+    rc=$?
+    trap - INT
+    cat "$out"
+    cat "$err" >&2
+    rm -f "$out" "$err"
+    return $rc
+}
+
 # _ask_run <prompt...>: run claude in the current folder's session, granting the
 # curated allowlist. Blocked commands are reported with an 'ask-allow' hint.
 _ask_run() {
@@ -142,7 +181,7 @@ _ask_run() {
     fi
 
     if [ -n "$sid" ]; then
-        claude -p --model "$_CLAUDE_ASK_MODEL" --append-system-prompt "$_CLAUDE_ASK_SYSPROMPT" \
+        _ask_claude -p --model "$_CLAUDE_ASK_MODEL" --append-system-prompt "$_CLAUDE_ASK_SYSPROMPT" \
             --allowedTools "${_CLAUDE_DO_TOOLS[@]}" --resume "$sid" "$*"
         rc=$?
         if [ $rc -eq 0 ]; then _ask_timer "$t0"; return 0; fi
@@ -152,7 +191,7 @@ _ask_run() {
     _CLAUDE_SESSIONS[$PWD]="$sid"
     # --name tags the session so ask threads are tellable apart from normal
     # claude sessions (shows in 'claude -r' / /resume, and in 'ask-sessions').
-    claude -p --model "$_CLAUDE_ASK_MODEL" --append-system-prompt "$_CLAUDE_ASK_SYSPROMPT" \
+    _ask_claude -p --model "$_CLAUDE_ASK_MODEL" --append-system-prompt "$_CLAUDE_ASK_SYSPROMPT" \
         --allowedTools "${_CLAUDE_DO_TOOLS[@]}" --name "ask: ${PWD##*/}" --session-id "$sid" "$*"
     rc=$?
     _ask_timer "$t0"
@@ -415,6 +454,7 @@ claude-ask — ask Claude Code from the terminal (current model: ${_CLAUDE_ASK_M
     ask-id             Show this folder's session id, size, and rotate limit.
     ask-sessions       List all ask-created sessions (tagged "ask: <folder>").
     ask-timer on|off   Show elapsed time after each ask (default on).
+                       Dots print while waiting; _CLAUDE_ASK_DOTS= disables.
                        Threads auto-rotate past \${_CLAUDE_ASK_MAX_KB}KB to stay fast.
 
   ALLOWLIST (what ask may run — persists to ~/.config/claude-ask/allowlist)
