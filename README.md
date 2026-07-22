@@ -27,6 +27,22 @@ ask commit these changes with a good message
 ask whats failing in the tests and fix it
 ```
 
+## Terminal context
+
+`ask` injects a system prompt telling Claude it's answering from a shell prompt
+on your actual OS (detected from `/etc/os-release`). That means:
+
+- **Terminal reading by default** — "the navigation add-on I installed" resolves
+  to a shell tool like `zoxide`/`fzf`, not a browser extension.
+- **Investigates instead of interrogating** — it checks `~/.bashrc`, `$PATH`,
+  installed packages and the current folder to answer for itself, rather than
+  firing clarifying questions back at you.
+- **Terminal-shaped answers** — short, concrete, runnable commands over prose.
+
+Note the trade-off: investigating costs real tool round-trips, so a question that
+makes it go look at things can take ~15s versus the ~3.3s floor. Use `ask1` when
+you just want a quick fact with no investigation.
+
 ## Auto-ask
 
 Once you've used any `ask` command in a terminal, an unknown command falls
