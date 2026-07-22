@@ -131,14 +131,27 @@ _CLAUDE_ASK_DOTS=1
 # Wait for $1, printing a dot every 0.4s. Only animates when stderr is a
 # terminal, so pipes and scripts stay clean. Dots are erased when done.
 _ask_wait_dots() {
-    local pid=$1 n=0
+    local pid=$1 i=0 d secs start
     if [ -z "${_CLAUDE_ASK_DOTS:-}" ] || [ ! -t 2 ]; then
         wait "$pid"; return $?
     fi
+    start=$(_ask_now_ms)
+    # Redraw one bounded line in place rather than emitting an ever-growing run
+    # of dots: a long wait used to print enough dots to wrap across terminal
+    # lines, which cannot then be erased cleanly and left whitespace residue.
+    # \r returns to column 0, \033[K clears to end of line (stderr is a tty here).
     while kill -0 "$pid" 2>/dev/null; do
-        printf '.' >&2; n=$(( n + 1 )); sleep 0.4
+        case $(( i % 3 )) in
+            0) d='.  ' ;;
+            1) d='.. ' ;;
+            *) d='...' ;;
+        esac
+        secs=$(( ( $(_ask_now_ms) - start ) / 1000 ))
+        printf '\r\033[Kthinking %s %ds' "$d" "$secs" >&2
+        i=$(( i + 1 ))
+        sleep 0.3
     done
-    [ "$n" -gt 0 ] && printf '\r%*s\r' "$n" '' >&2
+    printf '\r\033[K' >&2
     wait "$pid"
 }
 

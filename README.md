@@ -43,15 +43,19 @@ Note the trade-off: investigating costs real tool round-trips, so a question tha
 makes it go look at things can take ~15s versus the ~3.3s floor. Use `ask1` when
 you just want a quick fact with no investigation.
 
-While waiting, `ask` prints progress dots so a slow answer doesn't look like a
-hang; they're erased once the answer arrives, and the elapsed time is shown:
+While waiting, `ask` shows a live indicator with elapsed seconds, redrawn in
+place on one line, so a slow answer doesn't look like a hang:
 
 ```
 $ ask installed an add on for navigation how do i use
-........................
+thinking ... 12s          <- updates in place, erased when the answer arrives
 You have zoxide (smart cd) and fzf (fuzzy finder) installed...
   ⏱ 14.50s
 ```
+
+It deliberately redraws one bounded line rather than emitting a growing run of
+dots: a long wait produced enough dots to wrap across terminal lines, which
+can't be erased cleanly and left whitespace residue behind.
 
 Dots only animate when stderr is a terminal, so pipes and scripts stay clean.
 Set `_CLAUDE_ASK_DOTS=` to turn them off. Ctrl-C during a request kills the
