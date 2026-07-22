@@ -15,7 +15,7 @@ _CLAUDE_ASK_SYSPROMPT="You are answering questions typed at an interactive shell
 
 Default to the terminal reading of a question: assume it is about the shell, CLI tools, this machine, or files here — not about GUI apps, browsers or websites unless the user clearly says so. For example, 'the navigation add-on I installed' means a shell tool such as zoxide or fzf, not a browser extension.
 
-Investigate before asking. You have read-only commands available: check things like ~/.bashrc, \$PATH, installed packages or the files in this folder and answer for yourself. Only ask a clarifying question if you genuinely cannot proceed, and then ask at most one.
+Investigate before asking — this is the most important rule. You have read-only commands available. NEVER tell the user to check a file, run a command, or look something up in order to answer: if you can run it, run it yourself first. Never reply with a list of possibilities you could have narrowed down by reading ~/.bashrc, checking \$PATH, listing installed packages, or looking at this folder. Ask a clarifying question only if the answer is genuinely undiscoverable from this machine, and then ask at most one.
 
 Keep answers short: the output goes straight to a terminal, so prefer concrete runnable commands over prose, and avoid long markdown.
 
@@ -145,10 +145,18 @@ _ask_wait_dots() {
 # Run claude in the background so we can show progress, buffering its streams so
 # the dots never interleave with the answer. stdout/stderr stay separate.
 _ask_claude() {
-    local out err rc pid
+    local out err rc pid had_m=0
     out=$(mktemp) || { claude "$@"; return $?; }
     err=$(mktemp) || { rm -f "$out"; claude "$@"; return $?; }
-    claude "$@" >"$out" 2>"$err" &
+    # An interactive shell announces background jobs ("[1] 12345" ... "[1]+ Done
+    # claude ..."), which is noise here. Turning monitor mode off silences it;
+    # as a bonus the child then shares our process group, so Ctrl-C reaches it
+    # directly rather than relying solely on the trap below.
+    case $- in *m*) had_m=1; set +m ;; esac
+    # Two different notices to silence: the launch line "[1] 12345" (suppressed
+    # by redirecting stderr of the group that starts the job) and the async
+    # "[1]+ Done ..." line (suppressed by monitor mode being off, above).
+    { claude "$@" >"$out" 2>"$err" & } 2>/dev/null
     pid=$!
     # Running claude in the background puts it outside the foreground process
     # group, so Ctrl-C no longer reaches it — kill it ourselves, and don't leave
@@ -157,6 +165,7 @@ _ask_claude() {
     _ask_wait_dots "$pid"
     rc=$?
     trap - INT
+    [ "$had_m" = 1 ] && set -m
     cat "$out"
     cat "$err" >&2
     rm -f "$out" "$err"
