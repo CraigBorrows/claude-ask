@@ -171,11 +171,49 @@ if [ -z "${_CLAUDE_CNF_INSTALLED:-}" ]; then
     _CLAUDE_CNF_INSTALLED=1
 fi
 
+# Does this look like a natural-language question, rather than a typo'd command
+# or a pasted line of code/markdown? Pasting a block into the terminal runs
+# EVERY line as a command; without this guard each stray line fires an LLM call.
+_ask_looks_like_question() {
+    [ "$#" -ge 3 ] || return 1                 # 1-2 words -> almost certainly a typo
+    case "$*" in
+        '```'*|'#'*|'-'*|'*'*|'/'*|'~'*|'$'*|'>'*|'|'*) return 1 ;;  # markdown/path/shell
+        *'>>'*|*'&&'*|*'||'*|*'$('*|*'|'*|*';'*)        return 1 ;;  # shell plumbing = code
+    esac
+    return 0
+}
+
+# Backstop: a big paste can still produce many question-shaped lines. Rate-limit
+# auto-ask to 6 per 60s so a paste can't spray LLM calls.
+#
+# NOTE: bash runs command_not_found_handle in a SEPARATE EXECUTION ENVIRONMENT
+# (a subshell), so anything we assign there is lost when it returns — the
+# counter has to live in a file, and we can't flip _CLAUDE_ASK_AUTO off from
+# here. Over the limit we simply skip (report not-found) until the window rolls.
+# $$ stays the parent shell's PID inside a subshell, so the file is per-terminal.
+_ask_burst_ok() {
+    local f="${XDG_RUNTIME_DIR:-/tmp}/claude-ask-burst-$$"
+    local now=${EPOCHSECONDS:-0} t0=0 n=0
+    [ -r "$f" ] && read -r t0 n < "$f" 2>/dev/null
+    [ -z "$t0" ] && t0=0
+    [ -z "$n" ] && n=0
+    if [ $(( now - t0 )) -gt 60 ]; then t0=$now; n=0; fi
+    n=$(( n + 1 ))
+    printf '%s %s\n' "$t0" "$n" > "$f" 2>/dev/null
+    if [ "$n" -gt 6 ]; then
+        echo "auto-ask: too many unknown commands at once (looks like a paste) — skipping." >&2
+        echo "          use 'ask-auto off' before pasting blocks of text." >&2
+        return 1
+    fi
+    return 0
+}
+
 command_not_found_handle() {
-    # Route to ask only when auto is on AND we're not already inside a fallback
-    # (the reentrancy guard stops an infinite loop if claude/uuidgen ever go
-    # missing).
-    if [ -n "${_CLAUDE_ASK_AUTO:-}" ] && [ -z "${_CLAUDE_CNF_IN:-}" ]; then
+    # Route to ask only when auto is on, the input looks like a question, we're
+    # under the burst limit, and we're not already inside a fallback (the
+    # reentrancy guard stops an infinite loop if claude/uuidgen ever go missing).
+    if [ -n "${_CLAUDE_ASK_AUTO:-}" ] && [ -z "${_CLAUDE_CNF_IN:-}" ] \
+       && _ask_looks_like_question "$@" && _ask_burst_ok; then
         local _CLAUDE_CNF_IN=1
         _ask_run "$@"
         return $?
@@ -192,6 +230,7 @@ command_not_found_handle() {
 ask-auto() {
     case "${1:-status}" in
         on)  unset _CLAUDE_ASK_AUTO_OFF; _CLAUDE_ASK_AUTO=1
+             _CLAUDE_ASK_BURST_N=0; _CLAUDE_ASK_BURST_T0=${EPOCHSECONDS:-0}
              echo "auto-ask: ON — unknown commands go to ask." ;;
         off) _CLAUDE_ASK_AUTO_OFF=1; unset _CLAUDE_ASK_AUTO
              echo "auto-ask: OFF — unknown commands report 'command not found'." ;;

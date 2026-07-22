@@ -37,6 +37,23 @@ The fallback uses the same allowlist as `ask`, so only curated (safe) commands
 ever run — a typo can at worst trigger something like `git status`, never
 `rm`/`dd`. Toggle with `ask-auto on|off` (off until your first ask each terminal).
 
+### Pasting
+
+Pasting multi-line text into a terminal runs **every line as a command**, so
+auto-ask has two guards:
+
+- **Shape check** — only natural-language-looking input is sent to Claude. Lines
+  of 1–2 words, or starting with `` ``` ``/`#`/`-`/`/`/`~`/`$`, or containing
+  shell plumbing (`>>`, `&&`, `|`, `$(`, `;`) are treated as commands, not
+  questions, and fall through to the normal not-found handler.
+- **Rate limit** — at most 6 auto-asks per 60 seconds, so a big paste can't
+  spray LLM calls.
+
+Still: **run `ask-auto off` before pasting blocks of text**, and never paste a
+chat response back into the shell — prose and code fences will be executed line
+by line, and a heredoc (`<< 'EOF'`) will happily swallow the whole thing into
+whatever file it's writing.
+
 ## Acting safely — the allowlist
 
 `ask` can run commands unattended (headless mode can't pause for approval), so
@@ -108,5 +125,17 @@ associative array keyed by `$PWD`, holding one `uuidgen` id per folder visited i
 the terminal. The first `ask` in a folder uses `--session-id` to mint it; later
 ones use `--resume`. The array lives in the interactive shell, so it's naturally
 per-terminal and dies when the terminal closes. Auto-ask is a
-`command_not_found_handle` that routes unknown commands to a read-only `ask` once
-activated, preserving any pre-existing handler (e.g. Fedora's package suggester).
+`command_not_found_handle` that routes unknown commands to `ask` once activated,
+preserving any pre-existing handler (e.g. Fedora's package suggester).
+
+Note: bash runs `command_not_found_handle` in a **separate execution
+environment** (a subshell), so nothing it assigns survives the call. That's why
+the rate limiter keeps its counter in a file (`$XDG_RUNTIME_DIR/claude-ask-burst-$$`)
+rather than a variable, and why auto-ask can't switch itself off — over the limit
+it just declines until the window rolls. It also means a bare question asked in a
+folder that has no session yet can't record the new session id, so consecutive
+bare questions there won't chain; run an explicit `ask` first to establish the
+folder's thread.
+
+Editing `~/.bashrc` (and similar shell rc files) is blocked by Claude Code itself
+as a sensitive file — no allowlist entry overrides it. Edit those by hand.
