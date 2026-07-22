@@ -89,6 +89,16 @@ _ask_session_kb() {
     if [ -n "$f" ]; then du -k "$f" 2>/dev/null | cut -f1; else echo 0; fi
 }
 
+# Was this session created by ask? Sessions we mint carry an "ask: <folder>"
+# name. Rotation is gated on this so we can only ever abandon our OWN threads —
+# never an ordinary interactive claude session. (Rotating never deletes
+# anything; it just stops resuming that id. This is belt-and-braces.)
+_ask_is_ask_session() {
+    local f; f=$(_ask_session_file "$1")
+    [ -n "$f" ] || return 1
+    head -c 4096 "$f" 2>/dev/null | grep -q '"agentName":"ask:'
+}
+
 # Milliseconds since epoch. EPOCHREALTIME avoids forking; the [.,] handles
 # locales that use a comma as the decimal separator.
 _ask_now_ms() {
@@ -109,10 +119,11 @@ _ask_run() {
     t0=$(_ask_now_ms)
     sid="${_CLAUDE_SESSIONS[$PWD]}"
 
-    # Rotate an oversized thread before it slows everything down.
+    # Rotate an oversized thread before it slows everything down — but only if
+    # ask created it, so an ordinary claude session is never abandoned.
     if [ -n "$sid" ]; then
         kb=$(_ask_session_kb "$sid")
-        if [ "${kb:-0}" -gt "${_CLAUDE_ASK_MAX_KB:-250}" ]; then
+        if [ "${kb:-0}" -gt "${_CLAUDE_ASK_MAX_KB:-250}" ] && _ask_is_ask_session "$sid"; then
             echo "  ↻ thread was ${kb}KB — started a fresh one to stay fast (ask-id for details)" >&2
             sid=""
         fi

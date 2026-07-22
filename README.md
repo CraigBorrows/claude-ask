@@ -136,6 +136,12 @@ The trade-off is that rotating drops that folder's accumulated context. Raise
 huge to disable rotation. `ask-id` shows where the current thread sits, and
 `ask1` skips history entirely for standalone questions (constant ~3.3s).
 
+**Only ask's own threads rotate.** Rotation is gated on the `ask:` session tag,
+so an ordinary interactive claude session can never be abandoned — and rotating
+never deletes anything anyway, it just stops resuming that id and starts a new
+one. (Threads created before session tagging existed are untagged, so they won't
+auto-rotate; use `ask-new` if one of those feels slow.)
+
 ## Telling ask sessions apart
 
 Ask threads are created with `--name "ask: <folder>"`, so they're distinguishable
