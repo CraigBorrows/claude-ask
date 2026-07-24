@@ -81,17 +81,21 @@ underlying `claude` process and cleans up its temp files.
 
 ## Auto-ask
 
-Once you've used any `ask` command in a terminal, an unknown command falls
-through to `ask` instead of `command not found`:
+Auto-ask is **on from the first command in every terminal** — an unknown command
+falls through to `ask` instead of `command not found`, so you don't have to run
+`ask` once to prime it:
 
 ```bash
-ask when i run htop i see 30gb used        # activates auto-ask
-what is the 17gb disk cache                # no 'ask' — still answered
+pip install requests          # pip not installed? -> routed to ask, which
+                              #   tells you how to install pip and retry
+what is the 17gb disk cache   # any bare question is answered too
 ```
 
 The fallback uses the same allowlist as `ask`, so only curated (safe) commands
 ever run — a typo can at worst trigger something like `git status`, never
-`rm`/`dd`. Toggle with `ask-auto on|off` (off until your first ask each terminal).
+`rm`/`dd`. It's interactive-shell only, so scripts that source this file never
+route their errors to an LLM. Turn it off per-terminal with `ask-auto off`, or
+set `_CLAUDE_ASK_AUTO_ON_START=` in `claude-ask.sh` to require priming instead.
 
 ### Pasting
 

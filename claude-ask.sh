@@ -93,6 +93,11 @@ _CLAUDE_ASK_MAX_KB=250
 # Show elapsed time after each ask. Toggle with: ask-timer on|off
 _CLAUDE_ASK_TIMER=1
 
+# Route unknown commands to ask automatically from the FIRST command in every
+# terminal — no need to run 'ask' once to prime it. Set empty to require priming
+# instead; 'ask-auto off' still disables it per-terminal at any time.
+_CLAUDE_ASK_AUTO_ON_START=1
+
 # Locate a session's transcript by globbing, rather than reconstructing Claude's
 # cwd->project path encoding (which is undocumented and version-dependent).
 _ask_session_file() { ls -1 "$HOME"/.claude/projects/*/"$1".jsonl 2>/dev/null | head -1; }
@@ -422,7 +427,7 @@ ask-tools-reset() { _CLAUDE_DO_TOOLS=("${_CLAUDE_DO_TOOLS_DEFAULT[@]}"); _claude
 # The fallback uses the same allowlist as ask, so blocked commands tell you how
 # to enable them (ask-allow ...). Only allowlisted commands ever run, so a typo
 # can at worst trigger a safe, curated command — never rm/dd/etc.
-# Off by default until the first ask; toggle any time with: ask-auto on|off
+# On by default (see _CLAUDE_ASK_AUTO_ON_START); toggle any time: ask-auto on|off
 
 # Flip auto-ask on, unless the user has explicitly turned it off this session.
 _claude_activate() { [ -z "${_CLAUDE_ASK_AUTO_OFF:-}" ] && _CLAUDE_ASK_AUTO=1; }
@@ -473,6 +478,15 @@ _ask_burst_ok() {
     return 0
 }
 
+# Turn auto-ask on now, so it works from the very first command in a terminal
+# rather than after the first explicit 'ask'. Interactive shells only, so a
+# script that sources this file never routes its errors to an LLM. A reused PID
+# can leave a stale burst counter from a dead shell, so clear it on startup.
+case $- in
+    *i*) rm -f "${XDG_RUNTIME_DIR:-/tmp}/claude-ask-burst-$$" 2>/dev/null
+         [ -n "${_CLAUDE_ASK_AUTO_ON_START:-}" ] && _claude_activate ;;
+esac
+
 command_not_found_handle() {
     # Route to ask only when auto is on, the input looks like a question, we're
     # under the burst limit, and we're not already inside a fallback (the
@@ -499,7 +513,7 @@ ask-auto() {
              echo "auto-ask: ON — unknown commands go to ask." ;;
         off) _CLAUDE_ASK_AUTO_OFF=1; unset _CLAUDE_ASK_AUTO
              echo "auto-ask: OFF — unknown commands report 'command not found'." ;;
-        *)   if [ -n "${_CLAUDE_ASK_AUTO:-}" ]; then echo "auto-ask: ON"; else echo "auto-ask: OFF (turns ON after your first ask)"; fi ;;
+        *)   if [ -n "${_CLAUDE_ASK_AUTO:-}" ]; then echo "auto-ask: ON"; else echo "auto-ask: OFF (ask-auto on to enable)"; fi ;;
     esac
 }
 
@@ -521,9 +535,9 @@ claude-ask — ask Claude Code from the terminal (current model: ${_CLAUDE_ASK_M
     runp               Paste command(s) (Ctrl-D), review, confirm, then run.
 
   AUTO
-    ask-auto on|off    After your first ask, an unknown command falls through to
-                       ask instead of "command not found". Blocked commands tell
-                       you the 'ask-allow' to enable them.
+    ask-auto on|off    Unknown commands fall through to ask instead of "command
+                       not found" (ON by default in every terminal). Blocked
+                       commands tell you the 'ask-allow' to enable them.
 
   SESSIONS
     ask-new            Forget this folder's thread; next ask starts clean.
